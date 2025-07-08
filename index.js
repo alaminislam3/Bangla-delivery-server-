@@ -236,6 +236,32 @@ async function run() {
 
       res.send({ riderUpdate, userUpdate });
     });
+    // const { ObjectId } = require("mongodb");
+    /* Update a user and make admin */
+
+    app.patch("/users/:id/role", async (req, res) => {
+      const { id } = req.params;
+      const { role } = req.body;
+
+      if (!["admin", "user"].includes(role)) {
+        return res.status(400).send({ message: "Invalid role" });
+      }
+
+      try {
+        const result = await userCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { role } }
+        );
+
+        res.send({
+          message: `User role updated to ${role}`,
+          result,
+        });
+      } catch (error) {
+        console.error("Error updating role:", error);
+        res.status(500).send({ error: "Failed to update role" });
+      }
+    });
 
     /* delete from ui  (rider request )*/
     app.patch("/riders/reject/:id", async (req, res) => {
