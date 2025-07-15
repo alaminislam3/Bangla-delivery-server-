@@ -67,6 +67,16 @@ const verifyAdmin = async (req, res, next) => {
   }
   next();
 };
+// verify Rider
+const verifyRider = async (req, res, next) => {
+  const email = req.decoded.email;
+  const query = { email };
+  const user = await userCollection.findOne(query);
+  if (!user || user.role !== "rider") {
+    return res.status(403).send({ message: "forbidden access" });
+  }
+  next();
+};
 
 async function run() {
   try {
@@ -170,7 +180,7 @@ async function run() {
           { _id: new ObjectId(parcelId) },
           {
             $set: {
-              delivery_status: "rider_assigned",
+              deliveryStatus: "rider_assigned",
               assigned_rider_id: riderId,
               assigned_rider_email: riderEmail,
               assigned_rider_name: riderName,
@@ -243,9 +253,9 @@ async function run() {
     });
     /* rider status and role update  */
     app.patch("/riders/:id/status", async (req, res) => {
-      const { id } = req.params;
+      const riderId = req.params.id;
       const { status, email } = req.body;
-      const query = { _id: new ObjectId(id) };
+      const query = { _id: new ObjectId(riderId) };
       const updateDoc = {
         $set: {
           status,
@@ -275,6 +285,74 @@ async function run() {
         res.status(500).send({ message: "Failed to update rider status" });
       }
     });
+    // GET: Get pending delivery tasks for a rider
+    app.get("/rider/parcels", async (req, res) => {
+      try {
+        const email = req.query.email;
+
+        if (!email) {
+          return res.status(400).send({ message: "Rider email is required" });
+        }
+
+        const query = {
+          assigned_rider_email: email,
+          deliveryStatus: { $in: ["rider_assigned", "in_transit"] },
+        };
+
+        const options = {
+          sort: { creation_date: -1 }, // Newest first
+        };
+
+        const parcels = await parcelCollection.find(query, options).toArray();
+        res.send(parcels);
+      } catch (error) {
+        console.error("Error fetching rider tasks:", error);
+        res.status(500).send({ message: "Failed to get rider tasks" });
+      }
+    });
+
+    /* Update delivery status after rider pick up */
+    app.patch("/parcels/:id/status", async (req, res) => {
+      const parcelId = req.params.id;
+      const { status } = req.body;
+      try {
+        const result = await parcelCollection.updateOne(
+          { _id: new ObjectId(parcelId) },
+          { $set: { deliveryStatus: status } }
+        );
+        res.send(result)
+        console.log("308",status);
+      } catch (error) {
+        res.status(500).send({ message: "failed to update status " });
+      }
+    });
+    /* Getting completed parcel data  */
+    app.get("/rider/completed-parcels", verifyFBToken, verifyRider, async (req, res) => {
+      try {
+        const email = req.query.email;
+    
+        if (!email) {
+          return res.status(400).send({ message: "Rider email is required" });
+        }
+    
+        const query = {
+          assigned_rider_email: email,
+          deliveryStatus: { $in: ["delivered", "service_center_delivered"] },
+        };
+    
+        const options = {
+          sort: { delivery_complete_time: -1 }, // যদি time field থাকে, নতুনগুলো আগে
+        };
+    
+        const parcels = await parcelCollection.find(query, options).toArray();
+        res.send(parcels);
+      } catch (error) {
+        console.error("Error fetching completed parcels:", error);
+        res.status(500).send({ message: "Failed to get completed parcels" });
+      }
+    });
+    
+
     /* checking by user email that he is admin or not  */
     app.get("/users/:email/role", async (req, res) => {
       try {
