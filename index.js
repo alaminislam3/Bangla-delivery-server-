@@ -56,6 +56,7 @@ const userCollection = db.collection("users");
 const parcelCollection = db.collection("parcel");
 const paymentCollection = db.collection("payments");
 const riderCollection = db.collection("riders");
+const trackingsCollection = db.collection("trackings");
 
 // Verify Admin
 const verifyAdmin = async (req, res, next) => {
@@ -142,7 +143,7 @@ async function run() {
     app.get("/parcels", async (req, res) => {
       try {
         const email = req.query.email;
-        const query = email ? { email: email } : {};
+        const query = email ? { created_by: email } : {};
         const parcels = await parcelCollection
           .find(query)
           .sort({ creation_date: -1 }) /* get latest product  */
@@ -315,35 +316,41 @@ async function run() {
     app.patch("/parcels/:id/status", async (req, res) => {
       const parcelId = req.params.id;
       const { status } = req.body;
+      const updateDoc = { deliveryStatus: status };
+      if (status === "in_transit") {
+        updateDoc.picked_at = new Date().toISOString();
+      } else if (status === "delivered") {
+        updateDoc.delivered_at = new Date().toISOString();
+      }
       try {
         const result = await parcelCollection.updateOne(
           { _id: new ObjectId(parcelId) },
-          { $set: { deliveryStatus: status } }
+          { $set: updateDoc }
         );
-        res.send(result)
-        console.log("308",status);
+        res.send(result);
+        console.log("308", status);
       } catch (error) {
         res.status(500).send({ message: "failed to update status " });
       }
     });
     /* Getting completed parcel data  */
-    app.get("/rider/completed-parcels", verifyFBToken, verifyRider, async (req, res) => {
+    app.get("/rider/completed-parcels", async (req, res) => {
       try {
         const email = req.query.email;
-    
+
         if (!email) {
           return res.status(400).send({ message: "Rider email is required" });
         }
-    
+
         const query = {
           assigned_rider_email: email,
           deliveryStatus: { $in: ["delivered", "service_center_delivered"] },
         };
-    
+
         const options = {
           sort: { delivery_complete_time: -1 }, // যদি time field থাকে, নতুনগুলো আগে
         };
-    
+
         const parcels = await parcelCollection.find(query, options).toArray();
         res.send(parcels);
       } catch (error) {
@@ -351,7 +358,46 @@ async function run() {
         res.status(500).send({ message: "Failed to get completed parcels" });
       }
     });
-    
+
+    /* update cashout data in db */
+    app.patch("/parcels/:id/cashout", async (req, res) => {
+      const id = req.params.id;
+      const result = await parcelCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            cashout_status: "cashed_out",
+            cashed_out_at: new Date(),
+          },
+        }
+      );
+      res.send(result);
+    });
+    /* tracking start :  */
+    app.post("/trackings", async (req, res) => {
+      const update = req.body;
+
+      update.timestamp = new Date(); // ensure correct timestamp
+      if (!update.tracking_id || !update.status) {
+        return res
+          .status(400)
+          .json({ message: "tracking_id and status are required." });
+      }
+
+      const result = await trackingsCollection.insertOne(update);
+      res.status(201).json(result);
+    });
+
+    app.get("/trackings/:trackingId", async (req, res) => {
+      const trackingId = req.params.trackingId;
+
+      const updates = await trackingsCollection
+        .find({ tracking_id: trackingId })
+        .sort({ timestamp: 1 }) // sort by time ascending
+        .toArray();
+
+      res.json(updates);
+    });
 
     /* checking by user email that he is admin or not  */
     app.get("/users/:email/role", async (req, res) => {
@@ -469,7 +515,9 @@ async function run() {
 
         const res2 = await parcelCollection.updateOne(
           { _id: new ObjectId(parcelId) },
-          { $set: { paymentStatus: "paid" } }
+          { $set: { payment_status: "paid" },
+         delivery_status: "processing"
+        }
         );
         console.log(res2);
         res.send({
